@@ -93,8 +93,8 @@ class DownloadService : Service() {
             val outFile = File(dir, "$safe.mp3")
 
             val attempts = listOf(
+                Triple(url, "tv_embedded,visionos", "140/bestaudio[ext=m4a]/bestaudio"),
                 Triple(url, "visionos", "bestaudio"),
-                Triple(url, "tv_embedded", "140/bestaudio[ext=m4a]/bestaudio"),
                 Triple(url.replace("music.youtube.com", "www.youtube.com"), "", "bestaudio")
             )
 
@@ -148,8 +148,9 @@ class DownloadService : Service() {
                     throw e
                 } catch (e: Exception) {
                     lastError = e
-                    val msg = e.message.orEmpty()
-                    if (!msg.contains("403") && !msg.contains("Forbidden")) throw e
+                    // Coba client/format berikutnya untuk semua error yt-dlp yang bisa
+                    // muncul di HP: 403, client tidak didukung, format tidak tersedia, dll.
+                    // Canceled sudah ditangani di catch sebelumnya.
                 }
             }
             if (!succeeded) throw (lastError ?: Exception("Gagal mengunduh"))
