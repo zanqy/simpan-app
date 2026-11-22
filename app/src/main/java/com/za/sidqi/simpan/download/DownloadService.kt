@@ -98,6 +98,8 @@ class DownloadService : Service() {
                 addOption("--audio-format", "mp3")
                 addOption("--audio-quality", "0")
                 addOption("--no-playlist")
+                addOption("--extractor-args", "youtube:player_client=visionos")
+                addOption("--no-update")
                 addOption("-o", outFile.absolutePath)
             }
 
@@ -147,7 +149,17 @@ class DownloadService : Service() {
             if (!stalledRef.get()) DownloadManager.update(DownloadState.Canceled)
             updateNotification("Dibatalkan", 0)
         } catch (e: Exception) {
-            val message = e.message?.takeIf { it.isNotBlank() } ?: "Gagal mengunduh"
+            val raw = e.message
+                ?.lineSequence()
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                ?.lastOrNull()
+                ?: "Gagal mengunduh"
+            val message = when {
+                raw.contains("403") || raw.contains("Forbidden") -> "YouTube menolak akses (403). Coba lagi nanti."
+                raw.contains("Requested format") -> "Format audio tidak tersedia untuk link ini."
+                else -> raw.take(160)
+            }
             DownloadManager.update(DownloadState.Failed(url, message))
             updateNotification("Gagal: $message", 0)
         }
