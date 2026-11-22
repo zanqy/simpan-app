@@ -20,9 +20,13 @@ import com.za.sidqi.simpan.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class DownloadService : Service() {
 
@@ -64,7 +68,11 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    private var stalledRef = AtomicBoolean(false)
+
     private suspend fun doWork(url: String) {
+        stalledRef.set(false)
+        var watchdog: Job? = null
         try {
             DownloadManager.update(DownloadState.Fetching(url))
             updateNotification("Mengambil info lagu…", 0)
@@ -93,12 +101,29 @@ class DownloadService : Service() {
                 addOption("-o", outFile.absolutePath)
             }
 
-            DownloadManager.update(DownloadState.Running(url, title, 0f, 0L))
-            YoutubeDL.getInstance().execute(request, DownloadManager.PROCESS_ID) { progress, eta, _ ->
-                DownloadManager.update(DownloadState.Running(url, title, progress, eta))
-                updateNotification(title, progress.toInt().coerceIn(0, 100))
+            val lastUpdate = AtomicLong(System.currentTimeMillis())
+            stalledRef.set(false)
+            watchdog = scope.launch {
+                while (true) {
+                    delay(10_000)
+                    if (System.currentTimeMillis() - lastUpdate.get() > 150_000L) {
+                        stalledRef.set(true)
+                        YoutubeDL.destroyProcessById(DownloadManager.PROCESS_ID)
+                        DownloadManager.update(
+                            DownloadState.Failed(url, "YouTube tidak merespons. Coba lagi.")
+                        )
+                        break
+                    }
+                }
             }
-
+            DownloadManager.update(DownloadState.Running(url, title, 0f, 0L, "Menyiapkan…"))
+            YoutubeDL.getInstance().execute(request, DownloadManager.PROCESS_ID) { progress, eta, line ->
+                lastUpdate.set(System.currentTimeMillis())
+                val clean = if (progress.isFinite() && progress >= 0f) progress.coerceAtMost(100f) else 0f
+                val note = line.trim().take(120)
+                DownloadManager.update(DownloadState.Running(url, title, clean, eta, note))
+                updateNotification(title, clean.toInt())
+            }
             val size = if (outFile.exists()) outFile.length() else 0L
             if (outFile.exists()) scanMedia(outFile)
             AppDatabase.get(this).dao().upsert(
@@ -119,7 +144,7 @@ class DownloadService : Service() {
             )
             updateNotification("Tersimpan: $title", 100)
         } catch (e: YoutubeDL.CanceledException) {
-            DownloadManager.update(DownloadState.Canceled)
+            if (!stalledRef.get()) DownloadManager.update(DownloadState.Canceled)
             updateNotification("Dibatalkan", 0)
         } catch (e: Exception) {
             val message = e.message?.takeIf { it.isNotBlank() } ?: "Gagal mengunduh"
@@ -127,6 +152,7 @@ class DownloadService : Service() {
             updateNotification("Gagal: $message", 0)
         }
 
+        watchdog?.cancel()
         withContext(Dispatchers.Main) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         }

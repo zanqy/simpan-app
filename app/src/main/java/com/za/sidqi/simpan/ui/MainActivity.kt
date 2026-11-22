@@ -290,6 +290,17 @@ private fun RunningCard(state: DownloadState.Running, vm: MainViewModel) {
                 color = Amber,
                 trackColor = Line
             )
+            if (state.lastLine.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    state.lastLine,
+                    color = Muted,
+                    fontSize = 10.sp,
+                    fontFamily = Plex,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.height(14.dp))
             OutlinedButton(
                 onClick = { vm.cancel() },

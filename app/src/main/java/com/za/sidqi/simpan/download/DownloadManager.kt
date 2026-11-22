@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 sealed interface DownloadState {
     data object Idle : DownloadState
     data class Fetching(val url: String) : DownloadState
-    data class Running(val url: String, val title: String, val progress: Float, val eta: Long) : DownloadState
+    data class Running(val url: String, val title: String, val progress: Float, val eta: Long, val lastLine: String = "") : DownloadState
     data class Done(val url: String, val title: String, val path: String, val durationSec: Int, val sizeBytes: Long) : DownloadState
     data class Failed(val url: String, val message: String) : DownloadState
     data object Canceled : DownloadState
