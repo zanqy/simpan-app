@@ -92,16 +92,11 @@ class DownloadService : Service() {
             if (!dir.exists()) dir.mkdirs()
             val outFile = File(dir, "$safe.mp3")
 
-            val request = YoutubeDLRequest(url).apply {
-                addOption("-f", "bestaudio")
-                addOption("-x")
-                addOption("--audio-format", "mp3")
-                addOption("--audio-quality", "0")
-                addOption("--no-playlist")
-                addOption("--extractor-args", "youtube:player_client=visionos")
-                addOption("--no-update")
-                addOption("-o", outFile.absolutePath)
-            }
+            val attempts = listOf(
+                Triple(url, "visionos", "bestaudio"),
+                Triple(url, "tv_embedded", "140/bestaudio[ext=m4a]/bestaudio"),
+                Triple(url.replace("music.youtube.com", "www.youtube.com"), "", "bestaudio")
+            )
 
             val lastUpdate = AtomicLong(System.currentTimeMillis())
             stalledRef.set(false)
@@ -118,14 +113,46 @@ class DownloadService : Service() {
                     }
                 }
             }
-            DownloadManager.update(DownloadState.Running(url, title, 0f, 0L, "Menyiapkan…"))
-            YoutubeDL.getInstance().execute(request, DownloadManager.PROCESS_ID) { progress, eta, line ->
+
+            var succeeded = false
+            var lastError: Exception? = null
+            for ((attemptUrl, client, format) in attempts) {
+                if (outFile.exists()) outFile.delete()
+                val request = YoutubeDLRequest(attemptUrl).apply {
+                    addOption("-f", format)
+                    addOption("-x")
+                    addOption("--audio-format", "mp3")
+                    addOption("--audio-quality", "0")
+                    addOption("--no-playlist")
+                    if (client.isNotBlank()) {
+                        addOption("--extractor-args", "youtube:player_client=$client")
+                    }
+                    addOption("--no-update")
+                    addOption("-o", outFile.absolutePath)
+                }
                 lastUpdate.set(System.currentTimeMillis())
-                val clean = if (progress.isFinite() && progress >= 0f) progress.coerceAtMost(100f) else 0f
-                val note = line.trim().take(120)
-                DownloadManager.update(DownloadState.Running(url, title, clean, eta, note))
-                updateNotification(title, clean.toInt())
+                val label = if (client.isNotBlank()) "Mencoba $client…" else "Mencoba ulang…"
+                DownloadManager.update(DownloadState.Running(url, title, 0f, 0L, label))
+                try {
+                    YoutubeDL.getInstance().execute(request, DownloadManager.PROCESS_ID) { progress, eta, line ->
+                        lastUpdate.set(System.currentTimeMillis())
+                        val clean = if (progress.isFinite() && progress >= 0f) progress.coerceAtMost(100f) else 0f
+                        DownloadManager.update(
+                            DownloadState.Running(url, title, clean, eta, line.trim().take(120))
+                        )
+                        updateNotification(title, clean.toInt())
+                    }
+                    succeeded = true
+                    break
+                } catch (e: YoutubeDL.CanceledException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = e
+                    val msg = e.message.orEmpty()
+                    if (!msg.contains("403") && !msg.contains("Forbidden")) throw e
+                }
             }
+            if (!succeeded) throw (lastError ?: Exception("Gagal mengunduh"))
             val size = if (outFile.exists()) outFile.length() else 0L
             if (outFile.exists()) scanMedia(outFile)
             AppDatabase.get(this).dao().upsert(
